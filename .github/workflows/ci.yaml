@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - master
+
+jobs:
+  pre:
+    runs-on: ubuntu-latest
+    outputs:
+      examples: ${{ steps.list_examples.outputs.examples }}
+      ruby: ${{ steps.ruby.outputs.versions }}
+    name: Pre
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+      - name: Run RuboCop
+        run: bundle exec rake rubocop
+      - name: List examples
+        id: list_examples
+        run: .github/script/examples
+      - id: ruby
+        uses: voxpupuli/ruby-version@v1
+
+  unit:
+    needs: pre
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ${{ fromJSON(needs.pre.outputs.ruby) }}
+    name: Unit / Ruby ${{ matrix.ruby }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - name: Run tests
+        run: bundle exec rake spec
+      - name: Build gem
+        run: gem build --strict --verbose *.gemspec
+
+  acceptance:
+    needs:
+      - pre
+      - unit
+    runs-on: ubuntu-latest
+    env:
+      BEAKER_SETFILE: debian10-64
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ${{ fromJSON(needs.pre.outputs.ruby) }}
+        example: ${{ fromJson(needs.pre.outputs.examples) }}
+    name: Acceptance / Ruby ${{ matrix.ruby }} - ${{ matrix.example }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+          working-directory: examples/${{ matrix.example }}
+      - name: Run tests
+        run: bundle exec rake beaker
+        working-directory: examples/${{ matrix.example }}
+
+  post:
+    needs:
+      - unit
+      - acceptance
+    runs-on: ubuntu-latest
+    name: All tests
+    steps:
+      - name: Completion
+        run: echo "All tests completed successfully"
